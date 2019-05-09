@@ -63,10 +63,6 @@ ifeq ($(GRALLOC_USE_GRALLOC1_API),1)
 LOCAL_ANDROID_VERSION_NUM:=${LOCAL_ANDROID_VERSION_NUM}gralloc1
 endif
 
-ifeq ($(BOARD_INSTALL_VULKAN),true)
-LOCAL_ANDROID_VERSION_NUM:=${LOCAL_ANDROID_VERSION_NUM}-vulkan
-endif
-
 LOCAL_MODULE := libGLES_mali
 LOCAL_MULTILIB := both
 LOCAL_MODULE_SUFFIX := .so
@@ -88,17 +84,10 @@ LOCAL_SRC_FILES_32   := $(TARGET)/libGLES_mali_$(GPU_TARGET_PLATFORM)_32-$(LOCAL
 LOCAL_SRC_FILES_64	 := $(TARGET)/libGLES_mali_$(GPU_TARGET_PLATFORM)_64-$(LOCAL_ANDROID_VERSION_NUM).so
 endif
 
-ifeq ($(BOARD_INSTALL_OPENCL),true)
-LOCAL_POST_INSTALL_CMD = $(hide)\
-	ln -sf egl/$(notdir $(LOCAL_INSTALLED_MODULE)) $(dir $(LOCAL_INSTALLED_MODULE))../libOpenCL.so.1.1;\
-	ln -sf libOpenCL.so.1.1 $(dir $(LOCAL_INSTALLED_MODULE))../libOpenCL.so.1;\
-	ln -sf libOpenCL.so.1 $(dir $(LOCAL_INSTALLED_MODULE))../libOpenCL.so
-endif
-
 #BOARD_INSTALL_VULKAN default is false
 #It should defined in $(TARGET_PRODUCT).mk if Vulkan is needed.
 $(info "the value of BOARD_INSTALL_VULKAN is $(BOARD_INSTALL_VULKAN)")
-ifeq ($(BOARD_INSTALL_VULKAN),true)
+ifneq ($(BOARD_INSTALL_VULKAN),false)
 $(info TARGET_PRODUCT is $(TARGET_PRODUCT))
 LOCAL_POST_INSTALL_CMD = \
 	if [ ! -d $(dir $(LOCAL_INSTALLED_MODULE))/../hw ]; then \
@@ -106,7 +95,16 @@ LOCAL_POST_INSTALL_CMD = \
 	fi;\
 	cd $(dir $(LOCAL_INSTALLED_MODULE))/../hw;\
 	pwd; \
-	ln -sf ../egl/$(notdir $(LOCAL_INSTALLED_MODULE)) ./vulkan.amlogic.so
+	ln -sf ../egl/$(notdir $(LOCAL_INSTALLED_MODULE)) ./vulkan.amlogic.so;
+endif
+
+ifeq ($(BOARD_INSTALL_OPENCL),true)
+#related to vulkan.amlogic.so
+LOCAL_POST_INSTALL_CMD += \
+	cd ..; \
+	ln -sf egl/$(notdir $(LOCAL_INSTALLED_MODULE)) libOpenCL.so.1.1;\
+	ln -sf libOpenCL.so.1.1 libOpenCL.so.1;\
+	ln -sf libOpenCL.so.1 libOpenCL.so;
 endif
 
 include $(BUILD_PREBUILT)
