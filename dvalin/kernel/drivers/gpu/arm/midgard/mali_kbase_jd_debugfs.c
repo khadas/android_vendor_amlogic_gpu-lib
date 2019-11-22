@@ -1,6 +1,6 @@
 /*
  *
- * (C) COPYRIGHT 2014-2018 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2014-2019 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -46,18 +46,16 @@ static void kbase_jd_debugfs_fence_info(struct kbase_jd_atom *atom,
 	switch (atom->core_req & BASE_JD_REQ_SOFT_JOB_TYPE) {
 	case BASE_JD_REQ_SOFT_FENCE_TRIGGER:
 		res = kbase_sync_fence_out_info_get(atom, &info);
-		if (0 == res) {
+		if (res == 0)
 			seq_printf(sfile, "Sa([%p]%d) ",
 				   info.fence, info.status);
-			break;
-		}
+		break;
 	case BASE_JD_REQ_SOFT_FENCE_WAIT:
 		res = kbase_sync_fence_in_info_get(atom, &info);
-		if (0 == res) {
+		if (res == 0)
 			seq_printf(sfile, "Wa([%p]%d) ",
 				   info.fence, info.status);
-			break;
-		}
+		break;
 	default:
 		break;
 	}
@@ -221,6 +219,7 @@ static int kbasep_jd_debugfs_atoms_open(struct inode *in, struct file *file)
 }
 
 static const struct file_operations kbasep_jd_debugfs_atoms_fops = {
+	.owner = THIS_MODULE,
 	.open = kbasep_jd_debugfs_atoms_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
@@ -229,7 +228,12 @@ static const struct file_operations kbasep_jd_debugfs_atoms_fops = {
 
 void kbasep_jd_debugfs_ctx_init(struct kbase_context *kctx)
 {
-	KBASE_DEBUG_ASSERT(kctx != NULL);
+	/* Caller already ensures this, but we keep the pattern for
+	 * maintenance safety.
+	 */
+	if (WARN_ON(!kctx) ||
+		WARN_ON(IS_ERR_OR_NULL(kctx->kctx_dentry)))
+		return;
 
 	/* Expose all atoms */
 	debugfs_create_file("atoms", S_IRUGO, kctx->kctx_dentry, kctx,

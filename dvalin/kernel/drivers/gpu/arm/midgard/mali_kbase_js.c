@@ -1,6 +1,6 @@
 /*
  *
- * (C) COPYRIGHT 2011-2018 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2011-2019 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -27,10 +27,7 @@
  */
 #include <mali_kbase.h>
 #include <mali_kbase_js.h>
-#if defined(CONFIG_MALI_GATOR_SUPPORT)
-#include <mali_kbase_gator.h>
-#endif
-#include <mali_kbase_tlstream.h>
+#include <mali_kbase_tracepoints.h>
 #include <mali_kbase_hw.h>
 #include <mali_kbase_ctx_sched.h>
 
@@ -365,6 +362,7 @@ jsctx_rb_pull(struct kbase_context *kctx, struct kbase_jd_atom *katom)
 static void
 jsctx_tree_add(struct kbase_context *kctx, struct kbase_jd_atom *katom)
 {
+	struct kbase_device *kbdev = kctx->kbdev;
 	int prio = katom->sched_priority;
 	int js = katom->slot_nr;
 	struct jsctx_queue *queue = &kctx->jsctx_queue[prio][js];
@@ -387,7 +385,7 @@ jsctx_tree_add(struct kbase_context *kctx, struct kbase_jd_atom *katom)
 	rb_link_node(&katom->runnable_tree_node, parent, new);
 	rb_insert_color(&katom->runnable_tree_node, &queue->runnable_tree);
 
-	KBASE_TLSTREAM_TL_ATTRIB_ATOM_STATE(katom, TL_ATOM_STATE_READY);
+	KBASE_TLSTREAM_TL_ATTRIB_ATOM_STATE(kbdev, katom, TL_ATOM_STATE_READY);
 }
 
 /**
@@ -453,16 +451,10 @@ int kbasep_js_devdata_init(struct kbase_device * const kbdev)
 	jsdd->scheduling_period_ns = DEFAULT_JS_SCHEDULING_PERIOD_NS;
 	jsdd->soft_stop_ticks = DEFAULT_JS_SOFT_STOP_TICKS;
 	jsdd->soft_stop_ticks_cl = DEFAULT_JS_SOFT_STOP_TICKS_CL;
-	if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_8408))
-		jsdd->hard_stop_ticks_ss = DEFAULT_JS_HARD_STOP_TICKS_SS_8408;
-	else
-		jsdd->hard_stop_ticks_ss = DEFAULT_JS_HARD_STOP_TICKS_SS;
+	jsdd->hard_stop_ticks_ss = DEFAULT_JS_HARD_STOP_TICKS_SS;
 	jsdd->hard_stop_ticks_cl = DEFAULT_JS_HARD_STOP_TICKS_CL;
 	jsdd->hard_stop_ticks_dumping = DEFAULT_JS_HARD_STOP_TICKS_DUMPING;
-	if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_8408))
-		jsdd->gpu_reset_ticks_ss = DEFAULT_JS_RESET_TICKS_SS_8408;
-	else
-		jsdd->gpu_reset_ticks_ss = DEFAULT_JS_RESET_TICKS_SS;
+	jsdd->gpu_reset_ticks_ss = DEFAULT_JS_RESET_TICKS_SS;
 	jsdd->gpu_reset_ticks_cl = DEFAULT_JS_RESET_TICKS_CL;
 	jsdd->gpu_reset_ticks_dumping = DEFAULT_JS_RESET_TICKS_DUMPING;
 	jsdd->ctx_timeslice_ns = DEFAULT_JS_CTX_TIMESLICE_NS;
@@ -1018,14 +1010,7 @@ static bool kbase_js_dep_validate(struct kbase_context *kctx,
 					ret = false;
 					break;
 				}
-				/* Cross-slot dependencies must not violate
-				 * PRLAM-8987 affinity restrictions */
-				if (kbase_hw_has_issue(kbdev,
-							BASE_HW_ISSUE_8987) &&
-						(js == 2 || dep_js == 2)) {
-					ret = false;
-					break;
-				}
+
 				has_x_dep = true;
 			}
 
@@ -1482,10 +1467,7 @@ static kbasep_js_release_result kbasep_js_runpool_release_ctx_internal(
 				kctx, new_ref_count, js_kctx_info->ctx.nr_jobs,
 				kbasep_js_is_submit_allowed(js_devdata, kctx));
 
-#if defined(CONFIG_MALI_GATOR_SUPPORT)
-		kbase_trace_mali_mmu_as_released(kctx->as_nr);
-#endif
-		KBASE_TLSTREAM_TL_NRET_AS_CTX(&kbdev->as[kctx->as_nr], kctx);
+		KBASE_TLSTREAM_TL_NRET_AS_CTX(kbdev, &kbdev->as[kctx->as_nr], kctx);
 
 		kbase_backend_release_ctx_irq(kbdev, kctx);
 
@@ -1763,10 +1745,7 @@ static bool kbasep_js_schedule_ctx(struct kbase_device *kbdev,
 
 	kbdev->hwaccess.active_kctx[js] = kctx;
 
-#if defined(CONFIG_MALI_GATOR_SUPPORT)
-	kbase_trace_mali_mmu_as_in_use(kctx->as_nr);
-#endif
-	KBASE_TLSTREAM_TL_RET_AS_CTX(&kbdev->as[kctx->as_nr], kctx);
+	KBASE_TLSTREAM_TL_RET_AS_CTX(kbdev, &kbdev->as[kctx->as_nr], kctx);
 
 	/* Cause any future waiter-on-termination to wait until the context is
 	 * descheduled */
@@ -1886,7 +1865,7 @@ void kbasep_js_schedule_privileged_ctx(struct kbase_device *kbdev,
 	} else {
 		/* Already scheduled in - We need to retain it to keep the
 		 * corresponding address space */
-		kbasep_js_runpool_retain_ctx(kbdev, kctx);
+		WARN_ON(!kbasep_js_runpool_retain_ctx(kbdev, kctx));
 		mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
 		mutex_unlock(&js_devdata->queue_mutex);
 	}
@@ -2034,9 +2013,8 @@ bool kbase_js_is_atom_valid(struct kbase_device *kbdev,
 								BASE_JD_REQ_T)))
 		return false;
 
-	if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_8987) &&
-	    (katom->core_req & BASE_JD_REQ_ONLY_COMPUTE) &&
-	    (katom->core_req & (BASE_JD_REQ_CS | BASE_JD_REQ_T)))
+	if ((katom->core_req & BASE_JD_REQ_JOB_SLOT) &&
+			(katom->jobslot >= BASE_JM_MAX_NR_SLOTS))
 		return false;
 
 	return true;
@@ -2045,14 +2023,15 @@ bool kbase_js_is_atom_valid(struct kbase_device *kbdev,
 static int kbase_js_get_slot(struct kbase_device *kbdev,
 				struct kbase_jd_atom *katom)
 {
+	if (katom->core_req & BASE_JD_REQ_JOB_SLOT)
+		return katom->jobslot;
+
 	if (katom->core_req & BASE_JD_REQ_FS)
 		return 0;
 
 	if (katom->core_req & BASE_JD_REQ_ONLY_COMPUTE) {
 		if (katom->device_nr == 1 &&
 				kbdev->gpu_props.num_core_groups == 2)
-			return 2;
-		if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_8987))
 			return 2;
 	}
 
@@ -2260,12 +2239,9 @@ static void js_return_worker(struct work_struct *data)
 	unsigned long flags;
 	base_jd_core_req core_req = katom->core_req;
 
-	KBASE_TLSTREAM_TL_EVENT_ATOM_SOFTSTOP_EX(katom);
+	KBASE_TLSTREAM_TL_EVENT_ATOM_SOFTSTOP_EX(kbdev, katom);
 
 	kbase_backend_complete_wq(kbdev, katom);
-
-	if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_8316))
-		kbase_as_poking_timer_release_atom(kbdev, kctx, katom);
 
 	kbasep_js_atom_retained_state_copy(&retained_state, katom);
 
@@ -2343,6 +2319,8 @@ static void js_return_worker(struct work_struct *data)
 	mutex_unlock(&js_devdata->queue_mutex);
 
 	katom->atom_flags &= ~KBASE_KATOM_FLAG_HOLDING_CTX_REF;
+	WARN_ON(kbasep_js_has_atom_finished(&retained_state));
+
 	kbasep_js_runpool_release_ctx_and_katom_retained_state(kbdev, kctx,
 							&retained_state);
 
@@ -2491,10 +2469,8 @@ struct kbase_jd_atom *kbase_js_complete_atom(struct kbase_jd_atom *katom,
 				katom->sched_priority);
 	}
 
-#if defined(CONFIG_MALI_GATOR_SUPPORT)
-	kbase_trace_mali_job_slots_event(GATOR_MAKE_EVENT(GATOR_JOB_SLOT_STOP,
-				katom->slot_nr), NULL, 0);
-#endif
+	KBASE_TLSTREAM_AUX_EVENT_JOB_SLOT(kbdev, NULL,
+		katom->slot_nr, 0, TL_JS_EVENT_STOP);
 
 	kbase_jd_done(katom, katom->slot_nr, end_timestamp, 0);
 
@@ -2701,7 +2677,6 @@ void kbase_js_zap_context(struct kbase_context *kctx)
 	struct kbase_device *kbdev = kctx->kbdev;
 	struct kbasep_js_device_data *js_devdata = &kbdev->js_data;
 	struct kbasep_js_kctx_info *js_kctx_info = &kctx->jctx.sched_info;
-	int js;
 
 	/*
 	 * Critical assumption: No more submission is possible outside of the
@@ -2757,6 +2732,7 @@ void kbase_js_zap_context(struct kbase_context *kctx)
 	 */
 	if (!kbase_ctx_flag(kctx, KCTX_SCHEDULED)) {
 		unsigned long flags;
+		int js;
 
 		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 		for (js = 0; js < kbdev->gpu_props.num_job_slots; js++) {
@@ -2822,8 +2798,7 @@ void kbase_js_zap_context(struct kbase_context *kctx)
 		/* Cancel any remaining running jobs for this kctx - if any.
 		 * Submit is disallowed which takes effect immediately, so no
 		 * more new jobs will appear after we do this. */
-		for (js = 0; js < kbdev->gpu_props.num_job_slots; js++)
-			kbase_job_slot_hardstop(kctx, js, NULL);
+		kbase_backend_jm_kill_running_jobs_from_kctx(kctx);
 
 		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 		mutex_unlock(&js_kctx_info->ctx.jsctx_mutex);
