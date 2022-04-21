@@ -14,8 +14,8 @@
 # limitations under the License.
 #
 ifeq ($(shell test $(PLATFORM_SDK_VERSION) -le 25 && echo OK),OK)
-ifneq (,$(wildcard device/amlogic/$(TARGET_PRODUCT)/BoardConfig.mk))
-include device/amlogic/$(TARGET_PRODUCT)/BoardConfig.mk
+ifneq (,$(wildcard device/khadas/$(TARGET_PRODUCT)/BoardConfig.mk))
+include device/khadas/$(TARGET_PRODUCT)/BoardConfig.mk
 else
 ifneq (,$(wildcard device/customer/$(TARGET_PRODUCT)/BoardConfig.mk))
 include device/customer/$(TARGET_PRODUCT)/BoardConfig.mk
